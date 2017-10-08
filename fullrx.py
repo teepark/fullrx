@@ -19,7 +19,8 @@ from rx import Observable
 from rx.subjects import Subject
 
 # start_response callable type
-_SR = Callable[[str, Tuple[str, str]], Callable[[str], None]]
+# (not really true but we're not using the write callable)
+_SR = Callable[[str, List[Tuple[str, str]]], None]
 
 
 class Request(PRecord):
@@ -38,7 +39,7 @@ class Response:
 
     status: int
     headers: List[Tuple[str, str]]
-    body: str
+    body: bytes
 
 
 class RxToWsgi:
@@ -72,7 +73,7 @@ class RxToWsgi:
     def __call__(self,
                  environ: Dict[str, Any],
                  start_response: _SR,
-                 ) -> Iterable[str]:
+                 ) -> Iterable[bytes]:
         """Implement the WSGI application."""
         request = Request(environ=environ)
         ready = Event()

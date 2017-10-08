@@ -32,11 +32,8 @@ def _on_error(error: Exception) -> None:
 
 
 def main(environ: Mapping[str, str], argv: List[str]) -> int:
-    """Run the app."""
-    wsgi_app = RxToWsgi(rx_app)
-
-    server = pywsgi.WSGIServer(("127.0.0.1", 8000), wsgi_app)
-    server.serve_forever()
+    """Run the app server."""
+    pywsgi.WSGIServer(("127.0.0.1", 8000), RxToWsgi(rx_app)).serve_forever()
 
     return 100
 
