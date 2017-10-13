@@ -11,9 +11,6 @@ from typing import (
     Tuple,
 )
 
-import gevent
-from gevent.event import Event
-from gevent.queue import Queue
 from pyrsistent import PRecord, field
 from rx import Observable
 from rx.subjects import Subject
@@ -39,63 +36,66 @@ class Response:
 
     status: int
     headers: List[Tuple[str, str]]
-    body: bytes
+    body: Observable  # single response
 
 
 class RxToWsgi:
-    """
-    Valid WSGI app class that sends requests though rx observables.
+    """RxToWSGI."""
 
-    Create it with a function that maps an Observable of Requests to an
-    Observable of (Request, Response) tuples.
-    """
-
-    def __init__(self, rx_app: Callable[[Observable], Observable]) -> None:
-        """Initialize the RxToWsgi object."""
-        self._request_queue = Queue()
-        self._request_observable = _observe_queue(self._request_queue)
-        self._responses_ready: Dict[Request, Event] = {}
-        self._responses: Dict[Request, Response] = {}
-        self._response_observable = rx_app(self._request_observable)
-        self._response_observable.subscribe(self._coordinate_response,
-                                            on_error=self._coordinate_error)
-
-    def _coordinate_error(self, error: Exception) -> None:
-        print("RxToWsgi got error {}".format(error))
-
-    def _coordinate_response(self,
-                             request_response: Tuple[Request, Response],
-                             ) -> None:
-        request, response = request_response
-        self._responses[request] = response
-        self._responses_ready.pop(request).set()
+    def __init__(self,
+                 rx_app: Callable[[Request], Observable],
+                 ) -> None:
+        """Initialize."""
+        self.rx_app = rx_app
 
     def __call__(self,
                  environ: Dict[str, Any],
                  start_response: _SR,
                  ) -> Iterable[bytes]:
-        """Implement the WSGI application."""
-        request = Request(environ=environ)
-        ready = Event()
-        self._responses_ready[request] = ready
-        self._request_queue.put(request)
+        """Run the WSGI app."""
+        response = next(self.rx_app(Request(environ=environ))
+                        .to_blocking()
+                        .to_iterable())
 
-        ready.wait()
-
-        response = self._responses.pop(request)
         start_response(_status_string(response.status), response.headers)
-        return [response.body]
+        return response.body.to_blocking().to_iterable()
 
 
-def _observe_queue(queue: Queue) -> Observable:
-    subject = Subject()
-    gevent.spawn(_link_observable_to_queue, subject, queue)
-    return subject
+class FullRx:
+    """FullRx."""
 
+    def __init__(self,
+                 rx_app: Callable[[Observable], Observable],
+                 ) -> None:
+        """Initialize the WSGI app."""
+        self.rx_app = rx_app
 
-def _link_observable_to_queue(subject: Subject, queue: Queue) -> None:
-    while 1:
-        subject.on_next(queue.get())
+        self._request_stream = Subject()
+        self._request_stream.publish()
+
+        self._response_stream = self.rx_app(self._request_stream)
+        self._response_stream.subscribe(on_error=print)
+        self._response_stream.publish()
+
+    def __call__(self,
+                 environ: Dict[str, Any],
+                 start_response: _SR,
+                 ) -> Iterable[bytes]:
+        """Run the WSGI app."""
+        request = Request(environ=environ)
+
+        responses = (self._response_stream
+                     .filter(lambda pair: pair[0] is request)
+                     .first()
+                     .map(lambda pair: pair[1])
+                     .to_blocking()
+                     .to_iterable())
+
+        self._request_stream.on_next(request)
+        response = next(responses)
+
+        start_response(_status_string(response.status), response.headers)
+        return response.body.to_blocking().to_iterable()
 
 
 def _status_string(status_number: int) -> str:

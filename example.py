@@ -6,34 +6,40 @@ import sys
 from typing import List, Mapping
 
 from gevent import pywsgi
-from fullrx import Response, RxToWsgi
 from rx import Observable
 
+from fullrx import FullRx, Request, Response, RxToWsgi
 
-def _app(request: Observable) -> Response:
+
+def rx_app(request: Request) -> Observable:
+    """App."""
+    return Observable.just(_pure_app(request))
+
+
+def full_rx_app(requests: Observable) -> Observable:
+    """Full Rx app."""
+    return requests.map(lambda req: (req, _pure_app(req)))
+
+
+def _pure_app(request: Request) -> Response:
     response = Response()
     response.status = 200
-    response.body = b'\n'.join('{} {!r}'.format(*pair).encode('utf8')
-                               for pair in request.environ.items())
-    response.headers = [('Content-Type', 'text/plain'),
-                        ('Content-Encoding', 'utf-8'),
-                        ('Content-Length', str(len(response.body)))]
+    body = b'\n'.join(f'{k}: {v!r}'.encode('utf-8')
+                      for k, v in request.environ.items())
+    response.headers = [('Content-Length', str(len(body))),
+                        ('Content-Type', 'text/plain')]
+    response.body = Observable.just(body)
     return response
 
 
-def rx_app(requests:  Observable) -> Observable:
-    """Set up the app in rx form."""
-    requests.subscribe(on_error=_on_error)
-    return requests.map(lambda req: (req, _app(req)))
-
-
-def _on_error(error: Exception) -> None:
-    print("App got error {}".format(error))
+full_app = FullRx(full_rx_app)
+app = RxToWsgi(rx_app)
 
 
 def main(environ: Mapping[str, str], argv: List[str]) -> int:
     """Run the app server."""
-    pywsgi.WSGIServer(("127.0.0.1", 8000), RxToWsgi(rx_app)).serve_forever()
+    (pywsgi.WSGIServer(('127.0.0.1', 8001), full_app)
+     .serve_forever())
 
     return 100
 
