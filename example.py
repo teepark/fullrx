@@ -12,24 +12,23 @@ from fullrx import FullRx, Request, Response, RxToWsgi
 
 
 def rx_app(request: Request) -> Observable:
-    """App."""
+    """App in singular Rx form."""
     return Observable.just(_pure_app(request))
 
 
 def full_rx_app(requests: Observable) -> Observable:
-    """Full Rx app."""
-    return requests.map(lambda req: (req, _pure_app(req)))
+    """App in streaming Rx form."""
+    return requests.map(_pure_app)
 
 
 def _pure_app(request: Request) -> Response:
-    response = Response()
-    response.status = 200
-    body = b'\n'.join(f'{k}: {v!r}'.encode('utf-8')
-                      for k, v in request.environ.items())
-    response.headers = [('Content-Length', str(len(body))),
-                        ('Content-Type', 'text/plain')]
-    response.body = Observable.just(body)
-    return response
+    """Pure request -> response function."""
+    body = b'\n'.join(f'{k}: {v}'.encode('utf-8') for k, v in request.headers)
+    return Response(request,
+                    200,
+                    [('Content-Length', str(len(body))),
+                     ('Content-Type', 'text/plain')],
+                    Observable.just(body))
 
 
 full_app = FullRx(full_rx_app)
